@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
+	"github.com/wish/kops-controller/fallbackidentity"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -41,12 +42,13 @@ import (
 )
 
 // NewNodeReconciler is the constructor for a NodeReconciler
-func NewNodeReconciler(mgr manager.Manager, configPath string, identifier nodeidentity.Identifier) (*NodeReconciler, error) {
+func NewNodeReconciler(mgr manager.Manager, configPath string, identifier nodeidentity.Identifier, fallbackIdentifier fallbackidentity.Identifier) (*NodeReconciler, error) {
 	r := &NodeReconciler{
-		client:     mgr.GetClient(),
-		log:        ctrl.Log.WithName("controllers").WithName("Node"),
-		identifier: identifier,
-		cache:      vfs.NewCache(),
+		client:             mgr.GetClient(),
+		log:                ctrl.Log.WithName("controllers").WithName("Node"),
+		identifier:         identifier,
+		fallbackIdentifier: fallbackIdentifier,
+		cache:              vfs.NewCache(),
 	}
 
 	coreClient, err := corev1client.NewForConfig(mgr.GetConfig())
@@ -79,6 +81,9 @@ type NodeReconciler struct {
 	// identifier is a provider that can securely map node ProviderIDs to InstanceGroups
 	identifier nodeidentity.Identifier
 
+	// fallbackIdentifier
+	fallbackIdentifier fallbackidentity.Identifier
+
 	// configBase is the parsed path to the base location of our configuration files
 	configBase vfs.Path
 
@@ -109,12 +114,18 @@ func (r *NodeReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 		return ctrl.Result{}, fmt.Errorf("unable to load cluster object for node %s: %v", node.Name, err)
 	}
 
+	var labels map[string]string
 	ig, err := r.getInstanceGroupForNode(ctx, node)
-	if err != nil {
-		return ctrl.Result{}, fmt.Errorf("unable to load instance group object for node %s: %v", node.Name, err)
-	}
+	if err == nil {
+		labels, _ = nodelabels.BuildNodeLabels(cluster, ig)
+	} else {
+		klog.V(4).Infof("unable to load instance group object for node %s: %v", node.Name, err)
 
-	labels := nodelabels.BuildNodeLabels(cluster, ig)
+		labels, err = r.fallbackIdentifier.IdentifyNode(ctx, node)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("unable to load fallback instance object for node %s: %v", node.Name, err)
+		}
+	}
 
 	lifecycle, err := r.getInstanceLifecycle(ctx, node)
 	if err != nil {

@@ -22,13 +22,15 @@ import (
 	"io/ioutil"
 	"os"
 
+	"github.com/wish/kops-controller/controllers"
+	"github.com/wish/kops-controller/fallbackidentity"
+	awsfallback "github.com/wish/kops-controller/fallbackidentity/aws"
+	"github.com/wish/kops-controller/pkg/config"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
 	"k8s.io/klog"
 	"k8s.io/klog/klogr"
-	"k8s.io/kops/cmd/kops-controller/controllers"
-	"k8s.io/kops/cmd/kops-controller/pkg/config"
 	"k8s.io/kops/pkg/nodeidentity"
 	nodeidentityaws "k8s.io/kops/pkg/nodeidentity/aws"
 	nodeidentitydo "k8s.io/kops/pkg/nodeidentity/do"
@@ -120,12 +122,17 @@ func buildScheme() error {
 
 func addNodeController(mgr manager.Manager, opt *config.Options) error {
 	var identifier nodeidentity.Identifier
+	var fallbackIdentifier fallbackidentity.Identifier
 	var err error
 	switch opt.Cloud {
 	case "aws":
 		identifier, err = nodeidentityaws.New()
 		if err != nil {
 			return fmt.Errorf("error building identifier: %v", err)
+		}
+		fallbackIdentifier, err = awsfallback.New()
+		if err != nil {
+			return fmt.Errorf("error building fallback identifier: %v", err)
 		}
 	case "gce":
 		identifier, err = nodeidentitygce.New()
@@ -156,7 +163,7 @@ func addNodeController(mgr manager.Manager, opt *config.Options) error {
 		return fmt.Errorf("must specify configBase")
 	}
 
-	nodeController, err := controllers.NewNodeReconciler(mgr, opt.ConfigBase, identifier)
+	nodeController, err := controllers.NewNodeReconciler(mgr, opt.ConfigBase, identifier, fallbackIdentifier)
 	if err != nil {
 		return err
 	}
