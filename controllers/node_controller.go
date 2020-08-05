@@ -38,8 +38,12 @@ import (
 	"k8s.io/kops/util/pkg/vfs"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 )
+
+const syncFinishedLabel = "kops.k8s.io/finished-synced"
 
 // NewNodeReconciler is the constructor for a NodeReconciler
 func NewNodeReconciler(mgr manager.Manager, configPath string, identifier nodeidentity.Identifier, fallbackIdentifier fallbackidentity.Identifier) (*NodeReconciler, error) {
@@ -94,6 +98,8 @@ type NodeReconciler struct {
 // +kubebuilder:rbac:groups=,resources=nodes,verbs=get;list;watch;patch
 // Reconciler is the main reconciler function that observes node changes
 func (r *NodeReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
+	klog.V(6).Infof("Reconcile: %+#v", req)
+
 	ctx := context.Background()
 	_ = r.log.WithValues("nodecontroller", req.NamespacedName)
 
@@ -107,6 +113,13 @@ func (r *NodeReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 			return ctrl.Result{}, nil
 		}
 		return ctrl.Result{}, err
+	}
+
+	klog.V(6).Infof("node: %+#v", node)
+
+	if _, ok := node.Labels[syncFinishedLabel]; ok {
+		klog.V(4).Infof("synced finished for %s", node.Name)
+		return ctrl.Result{}, nil
 	}
 
 	cluster, err := r.getClusterForNode(node)
@@ -144,6 +157,8 @@ func (r *NodeReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 		}
 	}
 
+	updateLabels[syncFinishedLabel] = "true"
+
 	if len(updateLabels) == 0 {
 		klog.V(4).Infof("no label changes needed for %s", node.Name)
 		return ctrl.Result{}, nil
@@ -160,6 +175,24 @@ func (r *NodeReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 func (r *NodeReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&corev1.Node{}).
+		WithEventFilter(predicate.Funcs{
+			CreateFunc: func(e event.CreateEvent) bool {
+				klog.V(4).Infof("CreateFunc: %+#v", e)
+				return true
+			},
+			UpdateFunc: func(e event.UpdateEvent) bool {
+				klog.V(4).Infof("UpdateFunc: %+#v", e)
+				return false
+			},
+			DeleteFunc: func(e event.DeleteEvent) bool {
+				klog.V(4).Infof("DeleteFunc: %+#v", e)
+				return true
+			},
+			GenericFunc: func(e event.GenericEvent) bool {
+				klog.V(4).Infof("GenericFunc: %+#v", e)
+				return true
+			},
+		}).
 		Complete(r)
 }
 
