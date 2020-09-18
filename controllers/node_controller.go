@@ -33,7 +33,6 @@ import (
 	"k8s.io/kops/pkg/apis/kops"
 	"k8s.io/kops/pkg/apis/kops/registry"
 	"k8s.io/kops/pkg/nodeidentity"
-	"k8s.io/kops/pkg/nodelabels"
 	"k8s.io/kops/upup/pkg/fi/utils"
 	"k8s.io/kops/util/pkg/vfs"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -122,22 +121,9 @@ func (r *NodeReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 		return ctrl.Result{}, nil
 	}
 
-	cluster, err := r.getClusterForNode(node)
+	labels, err := r.fallbackIdentifier.IdentifyNode(ctx, node)
 	if err != nil {
-		return ctrl.Result{}, fmt.Errorf("unable to load cluster object for node %s: %v", node.Name, err)
-	}
-
-	var labels map[string]string
-	ig, err := r.getInstanceGroupForNode(ctx, node)
-	if err == nil {
-		labels, _ = nodelabels.BuildNodeLabels(cluster, ig)
-	} else {
-		klog.V(4).Infof("unable to load instance group object for node %s: %v", node.Name, err)
-
-		labels, err = r.fallbackIdentifier.IdentifyNode(ctx, node)
-		if err != nil {
-			return ctrl.Result{}, fmt.Errorf("unable to load fallback instance object for node %s: %v", node.Name, err)
-		}
+		return ctrl.Result{}, fmt.Errorf("unable to load fallback instance object for node %s: %v", node.Name, err)
 	}
 
 	lifecycle, err := r.getInstanceLifecycle(ctx, node)
