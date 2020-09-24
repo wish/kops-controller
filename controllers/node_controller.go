@@ -43,7 +43,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 )
 
-const syncFinishedLabel = "kops.k8s.io/finished-synced"
+const (
+	// node label to identify whether a node has cron jobs (true/false)
+	isCronLabel = "kops.k8s.io/is-cron"
+	syncFinishedLabel = "kops.k8s.io/finished-synced"
+)
 
 // NewNodeReconciler is the constructor for a NodeReconciler
 func NewNodeReconciler(mgr manager.Manager, configPath string, identifier nodeidentity.Identifier, fallbackIdentifier fallbackidentity.Identifier) (*NodeReconciler, error) {
@@ -131,6 +135,15 @@ func (r *NodeReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	ig, err := r.getInstanceGroupForNode(ctx, node)
 	if err == nil {
 		labels, _ = nodelabels.BuildNodeLabels(cluster, ig)
+
+		if _, found := labels[isCronLabel]; !found {
+			awsLabels, err := r.fallbackIdentifier.IdentifyNode(ctx, node)
+			if err == nil {
+				if isCron, found := awsLabels[isCronLabel]; found {
+					labels[isCronLabel] = isCron
+				}
+			}
+		}
 	} else {
 		klog.V(4).Infof("unable to load instance group object for node %s: %v", node.Name, err)
 
@@ -157,6 +170,9 @@ func (r *NodeReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 		}
 	}
 
+	if _, found := updateLabels[isCronLabel]; !found {
+		updateLabels[isCronLabel] = "false"
+	}
 	updateLabels[syncFinishedLabel] = "true"
 
 	if len(updateLabels) == 0 {
