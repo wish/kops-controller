@@ -20,8 +20,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"time"
-
 	"github.com/go-logr/logr"
 	"github.com/wish/kops-controller/fallbackidentity"
 	corev1 "k8s.io/api/core/v1"
@@ -30,11 +28,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/klog"
-	"k8s.io/kops/pkg/apis/kops"
-	"k8s.io/kops/pkg/apis/kops/registry"
 	"k8s.io/kops/pkg/nodeidentity"
-	"k8s.io/kops/pkg/nodelabels"
-	"k8s.io/kops/upup/pkg/fi/utils"
 	"k8s.io/kops/util/pkg/vfs"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -122,21 +116,9 @@ func (r *NodeReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 		return ctrl.Result{}, nil
 	}
 
-	var labels map[string]string
-	ig, err := r.getInstanceGroupForNode(ctx, node)
-	if err == nil {
-		cluster, err := r.getClusterForNode(node)
-		if err != nil {
-			return ctrl.Result{}, fmt.Errorf("unable to load cluster object for node %s: %v", node.Name, err)
-		}
-		labels, _ = nodelabels.BuildNodeLabels(cluster, ig)
-	} else {
-		klog.V(4).Infof("unable to load instance group object for node %s: %v", node.Name, err)
-
-		labels, err = r.fallbackIdentifier.IdentifyNode(ctx, node)
-		if err != nil {
-			return ctrl.Result{}, fmt.Errorf("unable to load fallback instance object for node %s: %v", node.Name, err)
-		}
+	labels, err := r.fallbackIdentifier.IdentifyNode(ctx, node)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("unable to load fallback instance object for node %s: %v", node.Name, err)
 	}
 
 	lifecycle, err := r.getInstanceLifecycle(ctx, node)
@@ -226,17 +208,6 @@ func (r *NodeReconciler) patchNodeLabels(ctx context.Context, node *corev1.Node,
 	return nil
 }
 
-// getClusterForNode returns the kops.Cluster object for the node
-// The cluster is actually loaded when we first start
-func (r *NodeReconciler) getClusterForNode(node *corev1.Node) (*kops.Cluster, error) {
-	clusterPath := r.configBase.Join(registry.PathClusterCompleted)
-	cluster, err := r.loadCluster(clusterPath)
-	if err != nil {
-		return nil, err
-	}
-	return cluster, nil
-}
-
 // getInstanceLifecycle returns InstanceLifecycle string object
 func (r *NodeReconciler) getInstanceLifecycle(ctx context.Context, node *corev1.Node) (string, error) {
 
@@ -246,65 +217,4 @@ func (r *NodeReconciler) getInstanceLifecycle(ctx context.Context, node *corev1.
 	}
 
 	return identity.InstanceLifecycle, nil
-}
-
-// getInstanceGroupForNode returns the kops.InstanceGroup object for the node
-func (r *NodeReconciler) getInstanceGroupForNode(ctx context.Context, node *corev1.Node) (*kops.InstanceGroup, error) {
-	// We assume that if the instancegroup label is set, that it is correct
-	// TODO: Should we be paranoid?
-	instanceGroupName := node.Labels["kops.k8s.io/instancegroup"]
-
-	if instanceGroupName == "" {
-		providerID := node.Spec.ProviderID
-		if providerID == "" {
-			return nil, fmt.Errorf("node providerID not set for node %q", node.Name)
-		}
-
-		identity, err := r.identifier.IdentifyNode(ctx, node)
-		if err != nil {
-			return nil, fmt.Errorf("error identifying node %q: %v", node.Name, err)
-		}
-
-		if identity.InstanceGroup == "" {
-			return nil, fmt.Errorf("node %q did not have an associate instance group", node.Name)
-		}
-		instanceGroupName = identity.InstanceGroup
-	}
-
-	return r.loadNamedInstanceGroup(instanceGroupName)
-}
-
-// loadCluster loads a kops.Cluster object from a vfs.Path
-func (r *NodeReconciler) loadCluster(p vfs.Path) (*kops.Cluster, error) {
-	ttl := time.Hour
-
-	b, err := r.cache.Read(p, ttl)
-	if err != nil {
-		return nil, fmt.Errorf("error loading Cluster %q: %v", p, err)
-	}
-
-	cluster := &kops.Cluster{}
-	if err := utils.YamlUnmarshal(b, cluster); err != nil {
-		return nil, fmt.Errorf("error parsing Cluster %q: %v", p, err)
-	}
-
-	return cluster, nil
-}
-
-// loadInstanceGroup loads a kops.InstanceGroup object from the vfs backing store
-func (r *NodeReconciler) loadNamedInstanceGroup(name string) (*kops.InstanceGroup, error) {
-	p := r.configBase.Join("instancegroup", name)
-
-	ttl := time.Hour
-	b, err := r.cache.Read(p, ttl)
-	if err != nil {
-		return nil, fmt.Errorf("error loading InstanceGroup %q: %v", p, err)
-	}
-
-	instanceGroup := &kops.InstanceGroup{}
-	if err := utils.YamlUnmarshal(b, instanceGroup); err != nil {
-		return nil, fmt.Errorf("error parsing InstanceGroup %q: %v", p, err)
-	}
-
-	return instanceGroup, nil
 }
