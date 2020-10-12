@@ -16,6 +16,18 @@ import (
 	"k8s.io/klog"
 )
 
+const (
+	RoleLabelName15        = "kubernetes.io/role"
+	RoleLabelName16        = "kubernetes.io/role"
+	RoleMasterLabelValue15 = "master"
+	RoleNodeLabelValue15   = "node"
+
+	RoleLabelMaster16 = "node-role.kubernetes.io/master"
+	RoleLabelNode16   = "node-role.kubernetes.io/node"
+
+	KopsInstanceGroup = "kops.k8s.io/instancegroup"
+)
+
 // fallbackIdentifier identifies a node from EC2
 type fallbackIdentifier struct {
 	// client is the ec2 interface
@@ -50,6 +62,7 @@ func New() (fallbackidentity.Identifier, error) {
 }
 
 func (i *fallbackIdentifier) IdentifyNode(ctx context.Context, node *corev1.Node) (map[string]string, error) {
+	labels := make(map[string]string)
 	providerID := node.Spec.ProviderID
 	if providerID == "" {
 		return nil, fmt.Errorf("providerID was not set for node %s", node.Name)
@@ -72,11 +85,28 @@ func (i *fallbackIdentifier) IdentifyNode(ctx context.Context, node *corev1.Node
 		return nil, err
 	}
 
-	labels := make(map[string]string)
+	var igName string
+	isMaster := false
 	for _, tag := range instance.Tags {
+		if aws.StringValue(tag.Key) == KopsInstanceGroup {
+			igName = aws.StringValue(tag.Value)
+		}
+		if aws.StringValue(tag.Key) == "k8s.io/role/master" {
+			isMaster = true
+		}
 		if strings.HasPrefix(aws.StringValue(tag.Key), "k8s:labels:") {
 			labels[aws.StringValue(tag.Key)[len("k8s:labels:"):]] = aws.StringValue(tag.Value)
 		}
+	}
+
+	if isMaster {
+		labels[RoleLabelMaster16] = ""
+		labels[RoleLabelName15] = RoleMasterLabelValue15
+		labels[KopsInstanceGroup] = igName
+	} else if igName == "nodes" {
+		labels[RoleLabelNode16] = ""
+		labels[RoleLabelName15] = RoleNodeLabelValue15
+		labels[KopsInstanceGroup] = igName
 	}
 
 	return labels, nil
