@@ -86,16 +86,20 @@ func (i *fallbackIdentifier) IdentifyNode(ctx context.Context, node *corev1.Node
 	}
 
 	var igName string
+	isMaster := false
 	for _, tag := range instance.Tags {
-		if aws.StringValue(tag.Key) == "kops.k8s.io/instancegroup" {
+		if aws.StringValue(tag.Key) == KopsInstanceGroup {
 			igName = aws.StringValue(tag.Value)
+		}
+		if aws.StringValue(tag.Key) == "k8s.io/role/master" {
+			isMaster = true
 		}
 		if strings.HasPrefix(aws.StringValue(tag.Key), "k8s:labels:") {
 			labels[aws.StringValue(tag.Key)[len("k8s:labels:"):]] = aws.StringValue(tag.Value)
 		}
 	}
 
-	if strings.Contains(igName, "master") {
+	if isMaster {
 		labels[RoleLabelMaster16] = ""
 		labels[RoleLabelName15] = RoleMasterLabelValue15
 		labels[KopsInstanceGroup] = igName
