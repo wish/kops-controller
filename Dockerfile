@@ -22,5 +22,5 @@ FROM alpine:3.11
 RUN apk --no-cache add ca-certificates
 WORKDIR /usr/bin/
 COPY --from=0 /go/src/github.com/wish/kops-controller/kops-controller /usr/bin/kops-controller
-RUN addgroup -S appgroup && adduser -S appuser -G appgroup --uid 1100
-USER 1100
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup --uid 10011
+USER 10011
