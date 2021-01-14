@@ -13,7 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/ec2/ec2iface"
 	"github.com/wish/kops-controller/fallbackidentity"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 )
 
 const (
@@ -62,7 +62,6 @@ func New() (fallbackidentity.Identifier, error) {
 }
 
 func (i *fallbackIdentifier) IdentifyNode(ctx context.Context, node *corev1.Node) (map[string]string, error) {
-	labels := make(map[string]string)
 	providerID := node.Spec.ProviderID
 	if providerID == "" {
 		return nil, fmt.Errorf("providerID was not set for node %s", node.Name)
@@ -83,6 +82,11 @@ func (i *fallbackIdentifier) IdentifyNode(ctx context.Context, node *corev1.Node
 	instance, err := i.getInstance(instanceID)
 	if err != nil {
 		return nil, err
+	}
+
+	labels := map[string]string{}
+	if instance.InstanceLifecycle != nil {
+		labels[fmt.Sprintf("node-role.kubernetes.io/%s-worker", *instance.InstanceLifecycle)] = "true"
 	}
 
 	var igName string
