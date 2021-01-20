@@ -24,18 +24,20 @@ import (
 
 	"github.com/wish/kops-controller/controllers"
 	"github.com/wish/kops-controller/fallbackidentity"
-	awsfallback "github.com/wish/kops-controller/fallbackidentity/aws"
+	"github.com/wish/kops-controller/fallbackidentity/aws"
 	"github.com/wish/kops-controller/pkg/config"
+	"github.com/wish/kops-controller/pkg/server"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
-	"k8s.io/klog"
-	"k8s.io/klog/klogr"
+	"k8s.io/klog/v2"
+	"k8s.io/klog/v2/klogr"
 	"k8s.io/kops/pkg/nodeidentity"
-	nodeidentityaws "k8s.io/kops/pkg/nodeidentity/aws"
 	nodeidentitydo "k8s.io/kops/pkg/nodeidentity/do"
 	nodeidentitygce "k8s.io/kops/pkg/nodeidentity/gce"
 	nodeidentityos "k8s.io/kops/pkg/nodeidentity/openstack"
+	"k8s.io/kops/upup/pkg/fi"
+	"k8s.io/kops/upup/pkg/fi/cloudup/awsup"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/yaml"
@@ -83,6 +85,30 @@ func main() {
 	}
 
 	ctrl.SetLogger(klogr.New())
+	if opt.Server != nil {
+		var verifier fi.Verifier
+		var err error
+		if opt.Server.Provider.AWS != nil {
+			verifier, err = awsup.NewAWSVerifier(opt.Server.Provider.AWS)
+			if err != nil {
+				setupLog.Error(err, "unable to create verifier")
+				os.Exit(1)
+			}
+		} else {
+			klog.Fatalf("server cloud provider config not provided")
+		}
+
+		srv, err := server.NewServer(&opt, verifier)
+		if err != nil {
+			setupLog.Error(err, "unable to create server")
+			os.Exit(1)
+		}
+		go func() {
+			err := srv.Start()
+			setupLog.Error(err, "unable to start server")
+			os.Exit(1)
+		}()
+	}
 
 	if err := buildScheme(); err != nil {
 		setupLog.Error(err, "error building scheme")
@@ -121,33 +147,29 @@ func buildScheme() error {
 }
 
 func addNodeController(mgr manager.Manager, opt *config.Options) error {
-	var identifier nodeidentity.Identifier
-	var fallbackIdentifier fallbackidentity.Identifier
+	var legacyIdentifier nodeidentity.LegacyIdentifier
+	var identifier fallbackidentity.Identifier
 	var err error
 	switch opt.Cloud {
 	case "aws":
-		identifier, err = nodeidentityaws.New()
+		identifier, err = aws.New()
 		if err != nil {
 			return fmt.Errorf("error building identifier: %v", err)
 		}
-		fallbackIdentifier, err = awsfallback.New()
-		if err != nil {
-			return fmt.Errorf("error building fallback identifier: %v", err)
-		}
 	case "gce":
-		identifier, err = nodeidentitygce.New()
+		legacyIdentifier, err = nodeidentitygce.New()
 		if err != nil {
 			return fmt.Errorf("error building identifier: %v", err)
 		}
 
 	case "openstack":
-		identifier, err = nodeidentityos.New()
+		legacyIdentifier, err = nodeidentityos.New()
 		if err != nil {
 			return fmt.Errorf("error building identifier: %v", err)
 		}
 
 	case "digitalocean":
-		identifier, err = nodeidentitydo.New()
+		legacyIdentifier, err = nodeidentitydo.New()
 		if err != nil {
 			return fmt.Errorf("error building identifier: %v", err)
 		}
@@ -159,16 +181,26 @@ func addNodeController(mgr manager.Manager, opt *config.Options) error {
 		return fmt.Errorf("identifier for cloud %q not implemented", opt.Cloud)
 	}
 
-	if opt.ConfigBase == "" {
-		return fmt.Errorf("must specify configBase")
-	}
+	if identifier != nil {
+		nodeController, err := controllers.NewNodeReconciler(mgr, identifier)
+		if err != nil {
+			return err
+		}
+		if err := nodeController.SetupWithManager(mgr); err != nil {
+			return err
+		}
+	} else {
+		if opt.ConfigBase == "" {
+			return fmt.Errorf("must specify configBase")
+		}
 
-	nodeController, err := controllers.NewNodeReconciler(mgr, opt.ConfigBase, identifier, fallbackIdentifier)
-	if err != nil {
-		return err
-	}
-	if err := nodeController.SetupWithManager(mgr); err != nil {
-		return err
+		nodeController, err := controllers.NewLegacyNodeReconciler(mgr, opt.ConfigBase, legacyIdentifier)
+		if err != nil {
+			return err
+		}
+		if err := nodeController.SetupWithManager(mgr); err != nil {
+			return err
+		}
 	}
 
 	return nil

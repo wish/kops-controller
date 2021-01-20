@@ -16,10 +16,38 @@ limitations under the License.
 
 package config
 
+import "k8s.io/kops/upup/pkg/fi/cloudup/awsup"
+
 type Options struct {
-	Cloud      string `json:"cloud,omitempty"`
-	ConfigBase string `json:"configBase,omitempty"`
+	Cloud                 string         `json:"cloud,omitempty"`
+	ConfigBase            string         `json:"configBase,omitempty"`
+	Server                *ServerOptions `json:"server,omitempty"`
+	CacheNodeidentityInfo bool           `json:"cacheNodeidentityInfo,omitempty"`
 }
 
 func (o *Options) PopulateDefaults() {
+}
+
+type ServerOptions struct {
+	// Listen is the network endpoint (ip and port) we should listen on.
+	Listen string
+
+	// Provider is the cloud provider.
+	Provider ServerProviderOptions `json:"provider"`
+
+	// ServerKeyPath is the path to our TLS serving private key.
+	ServerKeyPath string `json:"serverKeyPath,omitempty"`
+	// ServerCertificatePath is the path to our TLS serving certificate.
+	ServerCertificatePath string `json:"serverCertificatePath,omitempty"`
+
+	// CABasePath is a base of the path to CA certificate and key files.
+	CABasePath string `json:"caBasePath"`
+	// SigningCAs is the list of active signing CAs.
+	SigningCAs []string `json:"signingCAs"`
+	// CertNames is the list of active certificate names.
+	CertNames []string `json:"certNames"`
+}
+
+type ServerProviderOptions struct {
+	AWS *awsup.AWSVerifierOptions `json:"aws,omitempty"`
 }
